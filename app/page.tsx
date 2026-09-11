@@ -5,6 +5,7 @@ import { useState } from "react";
 interface FormatOption {
   format_id: string;
   quality: string;
+  codec: string | null;
   ext: string;
   filesize: number | null;
   filesize_label: string;
@@ -17,11 +18,114 @@ interface VideoInfo {
   formats: FormatOption[];
 }
 
+const AUDIO_QUALITIES = [
+  { value: "m4a-48", label: "M4A - (48K)" },
+  { value: "m4a-128", label: "M4A - (128K)" },
+  { value: "mp3-128", label: "MP3 - (128K)" },
+];
+
+function AudioQualityDropdown({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected =
+    AUDIO_QUALITIES.find((q) => q.value === value) ?? AUDIO_QUALITIES[0];
+
+  return (
+    <div style={{ position: "relative", width: "100%" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "12px 16px",
+          backgroundColor: "#ffffff",
+          color: "#171717",
+          border: "2px solid #171717",
+          borderRadius: open ? "10px 10px 0 0" : 10,
+          fontSize: 15,
+          fontWeight: 500,
+          cursor: "pointer",
+        }}
+      >
+        <span>{selected.label}</span>
+        <span
+          style={{
+            fontSize: 11,
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.15s ease",
+          }}
+        >
+          ▼
+        </span>
+      </button>
+
+      {open && (
+        <>
+          {/* Klik di luar untuk menutup dropdown */}
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: "fixed", inset: 0, zIndex: 9 }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              left: 0,
+              right: 0,
+              border: "2px solid #171717",
+              borderTop: "1px solid #e5e7eb",
+              borderRadius: "0 0 10px 10px",
+              overflow: "hidden",
+              zIndex: 10,
+              backgroundColor: "#ffffff",
+              boxShadow: "0 8px 16px rgba(0,0,0,0.15)",
+            }}
+          >
+            {AUDIO_QUALITIES.map((q) => {
+              const isSelected = q.value === value;
+              return (
+                <div
+                  key={q.value}
+                  onClick={() => {
+                    onChange(q.value);
+                    setOpen(false);
+                  }}
+                  style={{
+                    padding: "12px 16px",
+                    cursor: "pointer",
+                    backgroundColor: isSelected ? "#2563eb" : "#ffffff",
+                    color: isSelected ? "#ffffff" : "#171717",
+                    fontWeight: isSelected ? 600 : 400,
+                    fontSize: 15,
+                  }}
+                >
+                  {q.label}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [info, setInfo] = useState<VideoInfo | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [mode, setMode] = useState<"video" | "audio">("video");
+  const [audioQuality, setAudioQuality] = useState("m4a-48");
+  const [videoFormatId, setVideoFormatId] = useState("");
 
   const handleCheck = async () => {
     setError("");
@@ -36,6 +140,7 @@ export default function Home() {
         setError(data.error);
       } else {
         setInfo(data);
+        setVideoFormatId(data.formats?.[0]?.format_id ?? "");
       }
     } catch {
       setError("Terjadi kesalahan, coba lagi.");
@@ -47,6 +152,23 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/immutability
     window.location.href = `/api/download?url=${encodeURIComponent(url)}&format_id=${formatId}`;
   };
+
+  const handleDownloadAudio = () => {
+    // eslint-disable-next-line react-hooks/immutability
+    window.location.href = `/api/download?url=${encodeURIComponent(url)}&type=audio&quality=${audioQuality}`;
+  };
+
+  const tabButtonStyle = (active: boolean): React.CSSProperties => ({
+    flex: 1,
+    padding: "10px 16px",
+    backgroundColor: active ? "#2563eb" : "#f3f4f6",
+    color: active ? "#ffffff" : "#171717",
+    border: "1px solid #d1d5db",
+    borderRadius: 6,
+    fontSize: 15,
+    fontWeight: 600,
+    cursor: "pointer",
+  });
 
   return (
     <div style={{ maxWidth: 600, margin: "60px auto", fontFamily: "sans-serif" }}>
@@ -84,31 +206,95 @@ export default function Home() {
           <h3>{info.title}</h3>
           <p>Durasi: {Math.floor(info.duration / 60)} menit {info.duration % 60} detik</p>
 
-          <h4>Pilih Kualitas:</h4>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {info.formats.map((f) => (
-              <button
-                key={f.format_id}
-                onClick={() => handleDownload(f.format_id)}
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button
+              type="button"
+              onClick={() => setMode("video")}
+              style={tabButtonStyle(mode === "video")}
+            >
+              Video
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("audio")}
+              style={tabButtonStyle(mode === "audio")}
+            >
+              Audio (MP3)
+            </button>
+          </div>
+
+          {mode === "video" && (
+            <div style={{ marginTop: 16 }}>
+              <h4>Pilih Kualitas:</h4>
+              <select
+                value={videoFormatId}
+                onChange={(e) => setVideoFormatId(e.target.value)}
+                disabled={info.formats.length === 0}
                 style={{
-                  padding: "10px 16px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
                   width: "100%",
-                  backgroundColor: "#f3f4f6",
+                  padding: "12px 16px",
+                  backgroundColor: "#ffffff",
                   color: "#171717",
-                  border: "1px solid #d1d5db",
-                  borderRadius: 6,
-                  cursor: "pointer",
+                  border: "2px solid #171717",
+                  borderRadius: 8,
                   fontSize: 15,
+                  cursor: info.formats.length === 0 ? "not-allowed" : "pointer",
                 }}
               >
-                <span>{f.quality} ({f.ext})</span>
-                <span style={{ opacity: 0.7, fontSize: 14 }}>{f.filesize_label}</span>
+                {info.formats.map((f) => (
+                  <option
+                    key={f.format_id}
+                    value={f.format_id}
+                  >
+                    {f.quality} ({f.ext}
+                    {f.codec ? `, ${f.codec}` : ""}) - {f.filesize_label}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => handleDownload(videoFormatId)}
+                disabled={!videoFormatId}
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  padding: "12px 16px",
+                  backgroundColor: videoFormatId ? "#2563eb" : "#93c5fd",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontSize: 16,
+                  fontWeight: 600,
+                  cursor: videoFormatId ? "pointer" : "not-allowed",
+                }}
+              >
+                Download Video
               </button>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {mode === "audio" && (
+            <div style={{ marginTop: 16 }}>
+              <h4>Pilih Kualitas Audio:</h4>
+              <AudioQualityDropdown value={audioQuality} onChange={setAudioQuality} />
+              <button
+                onClick={handleDownloadAudio}
+                style={{
+                  marginTop: 12,
+                  width: "100%",
+                  padding: "12px 16px",
+                  backgroundColor: "#2563eb",
+                  color: "#ffffff",
+                  border: "none",
+                  borderRadius: 8,
+                  fontSize: 16,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Download Audio
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

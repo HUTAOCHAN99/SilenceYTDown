@@ -30,10 +30,19 @@ function runProcess(cmd, args) {
   });
 }
 
+// Pilihan kualitas audio yang didukung, sesuai dropdown di UI
+const AUDIO_QUALITY_PRESETS = {
+  "m4a-48": { ext: "m4a", codec: "aac", bitrate: "48k", contentType: "audio/mp4" },
+  "m4a-128": { ext: "m4a", codec: "aac", bitrate: "128k", contentType: "audio/mp4" },
+  "mp3-128": { ext: "mp3", codec: "libmp3lame", bitrate: "128k", contentType: "audio/mpeg" },
+};
+
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get("url");
   const formatId = searchParams.get("format_id");
+  const type = searchParams.get("type") || "video";
+  const audioQualityParam = searchParams.get("quality") || "mp3-128";
 
   if (!url) {
     return NextResponse.json(
@@ -42,6 +51,108 @@ export async function GET(request) {
     );
   }
 
+  if (type === "audio") {
+    return handleAudioDownload(url, audioQualityParam);
+  }
+
+  return handleVideoDownload(url, formatId);
+}
+
+async function handleAudioDownload(url, audioQualityParam) {
+  const preset = AUDIO_QUALITY_PRESETS[audioQualityParam] || AUDIO_QUALITY_PRESETS["mp3-128"];
+
+  const jobId = crypto.randomUUID();
+  const tmpDir = path.join(os.tmpdir(), `silenceytdl-audio-${jobId}`);
+  const sourceTemplate = path.join(tmpDir, "source.%(ext)s");
+  const finalPath = path.join(tmpDir, `audio.${preset.ext}`);
+
+  try {
+    await fs.mkdir(tmpDir, { recursive: true });
+
+    // 1. Unduh stream audio terbaik yang tersedia (ekstensi ditentukan yt-dlp sendiri)
+    const ytdlpArgs = [
+      "-f", "bestaudio/best",
+      "-o", sourceTemplate,
+      "--no-playlist",
+      url,
+    ];
+
+    const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs);
+
+    if (ytdlpResult.code !== 0) {
+      console.error(`yt-dlp gagal (audio): ${ytdlpResult.stderr}`);
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      return NextResponse.json(
+        { error: "Gagal mengunduh audio dari sumbernya" },
+        { status: 502 },
+      );
+    }
+
+    // Cari file hasil download (ekstensi bervariasi: webm, m4a, opus, dll)
+    const filesInTmp = await fs.readdir(tmpDir);
+    const sourceFile = filesInTmp.find((f) => f.startsWith("source."));
+
+    if (!sourceFile) {
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      return NextResponse.json(
+        { error: "File audio hasil unduhan tidak ditemukan" },
+        { status: 500 },
+      );
+    }
+
+    const sourcePath = path.join(tmpDir, sourceFile);
+
+    // 2. Konversi ke format & bitrate target dengan ffmpeg
+    const ffmpegArgs = [
+      "-y",
+      "-i", sourcePath,
+      "-vn",
+      "-c:a", preset.codec,
+      "-b:a", preset.bitrate,
+      "-ar", "44100",
+      finalPath,
+    ];
+
+    const ffmpegResult = await runProcess("ffmpeg", ffmpegArgs);
+
+    if (ffmpegResult.code !== 0) {
+      console.error(`ffmpeg konversi audio gagal: ${ffmpegResult.stderr}`);
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+      return NextResponse.json(
+        { error: "Gagal memproses hasil unduhan audio" },
+        { status: 502 },
+      );
+    }
+
+    // 3. Kirim file audio yang sudah dikonversi
+    const stat = await fs.stat(finalPath);
+    const nodeStream = createReadStream(finalPath);
+    const webStream = Readable.toWeb(nodeStream);
+
+    const cleanup = () => {
+      fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    };
+    nodeStream.on("close", cleanup);
+    nodeStream.on("error", cleanup);
+
+    return new NextResponse(webStream, {
+      headers: {
+        "Content-Disposition": `attachment; filename="audio.${preset.ext}"`,
+        "Content-Type": preset.contentType,
+        "Content-Length": String(stat.size),
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    return NextResponse.json(
+      { error: "Terjadi kesalahan saat memproses unduhan audio" },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleVideoDownload(url, formatId) {
   // Folder sementara unik per request, biar request paralel nggak tabrakan
   const jobId = crypto.randomUUID();
   const tmpDir = path.join(os.tmpdir(), `silenceytdl-${jobId}`);

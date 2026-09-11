@@ -46,10 +46,39 @@ export async function GET(request) {
       return size > max ? size : max;
     }, 0);
 
+    // Nama codec yang ramah dibaca, diambil dari prefix vcodec (mis. "avc1.640028" -> "avc1")
+    const CODEC_LABELS = {
+      avc1: "H.264",
+      avc3: "H.264",
+      vp9: "VP9",
+      vp09: "VP9",
+      av01: "AV1",
+      hev1: "HEVC",
+      hvc1: "HEVC",
+    };
+    // Urutan prioritas codec saat resolusi & fps sama (paling kompatibel duluan)
+    const CODEC_PRIORITY = { "H.264": 0, VP9: 1, AV1: 2, HEVC: 3 };
+
+    const getCodecLabel = (vcodecRaw) => {
+      if (!vcodecRaw || vcodecRaw === "none") return null;
+      const key = vcodecRaw.split(".")[0];
+      return CODEC_LABELS[key] || key.toUpperCase();
+    };
+
+    // Kalau filesize & filesize_approx nggak ada, perkirakan dari bitrate rata-rata (tbr) x durasi
+    const estimateFromBitrate = (tbrKbps, durationSec) => {
+      if (!tbrKbps || !durationSec) return 0;
+      return Math.round(((tbrKbps * 1000) / 8) * durationSec);
+    };
+
     const formats = (info.formats || [])
       .filter((f) => f.vcodec !== "none" && f.ext === "mp4") // video-only atau gabungan, asal mp4
       .map((f) => {
-        const rawSize = f.filesize || f.filesize_approx || 0;
+        const rawSize =
+          f.filesize ||
+          f.filesize_approx ||
+          estimateFromBitrate(f.tbr, info.duration) ||
+          0;
         // Kalau format ini video-only (tanpa audio), ukuran akhir = video + audio terbaik yang akan digabung
         const isVideoOnly = f.acodec === "none";
         const totalBytes = rawSize
@@ -58,7 +87,8 @@ export async function GET(request) {
 
         // Bulatkan fps (yt-dlp kadang kasih desimal spt 29.97/59.94)
         const fps = f.fps ? Math.round(f.fps) : null;
-        const baseQuality = f.format_note || f.resolution || "unknown";
+        const baseQuality =
+          f.format_note || (f.height ? `${f.height}p` : f.resolution || "unknown");
         // Tambahkan label fps kalau belum otomatis ada di format_note (mis. "1080p" -> "1080p 60fps")
         const quality =
           fps && !baseQuality.toString().includes(String(fps))
@@ -68,19 +98,30 @@ export async function GET(request) {
         return {
           format_id: f.format_id,
           quality,
+          codec: getCodecLabel(f.vcodec),
           fps,
+          height: f.height || null,
           ext: f.ext,
           filesize: totalBytes || null,
           filesize_label: formatBytes(totalBytes) || "Ukuran tidak diketahui",
         };
       })
-      // buang duplikat kualitas+fps yang sama
+      // buang duplikat yang benar-benar identik: kualitas + fps + codec sama persis
       .filter(
         (f, i, arr) =>
-          arr.findIndex((x) => x.quality === f.quality && x.fps === f.fps) === i,
+          arr.findIndex(
+            (x) => x.quality === f.quality && x.fps === f.fps && x.codec === f.codec,
+          ) === i,
       )
-      // urutkan dari kualitas terbesar ke terkecil berdasarkan ukuran
-      .sort((a, b) => (b.filesize || 0) - (a.filesize || 0));
+      // urutkan: resolusi tertinggi dulu, lalu fps tertinggi, lalu codec paling kompatibel duluan
+      .sort((a, b) => {
+        if ((b.height || 0) !== (a.height || 0)) return (b.height || 0) - (a.height || 0);
+        if ((b.fps || 0) !== (a.fps || 0)) return (b.fps || 0) - (a.fps || 0);
+        const ap = CODEC_PRIORITY[a.codec] ?? 9;
+        const bp = CODEC_PRIORITY[b.codec] ?? 9;
+        if (ap !== bp) return ap - bp;
+        return (b.filesize || 0) - (a.filesize || 0);
+      });
 
     return NextResponse.json({
       title: info.title,
