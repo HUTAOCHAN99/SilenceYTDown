@@ -6,6 +6,8 @@ interface FormatOption {
   format_id: string;
   quality: string;
   ext: string;
+  filesize: number | null;
+  filesize_label: string;
 }
 
 interface VideoInfo {
@@ -57,7 +59,20 @@ export default function Home() {
         onChange={(e) => setUrl(e.target.value)}
         style={{ width: "100%", padding: 10, fontSize: 16 }}
       />
-      <button onClick={handleCheck} disabled={loading} style={{ marginTop: 10, padding: "10px 20px" }}>
+      <button
+        onClick={handleCheck}
+        disabled={loading}
+        style={{
+          marginTop: 10,
+          padding: "10px 20px",
+          backgroundColor: loading ? "#93c5fd" : "#2563eb",
+          color: "#ffffff",
+          border: "none",
+          borderRadius: 6,
+          fontSize: 16,
+          cursor: loading ? "not-allowed" : "pointer",
+        }}
+      >
         {loading ? "Memeriksa..." : "Cek Video"}
       </button>
 
@@ -70,15 +85,30 @@ export default function Home() {
           <p>Durasi: {Math.floor(info.duration / 60)} menit {info.duration % 60} detik</p>
 
           <h4>Pilih Kualitas:</h4>
-          {info.formats.map((f) => (
-            <button
-              key={f.format_id}
-              onClick={() => handleDownload(f.format_id)}
-              style={{ margin: 5, padding: "8px 16px" }}
-            >
-              {f.quality} ({f.ext})
-            </button>
-          ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {info.formats.map((f) => (
+              <button
+                key={f.format_id}
+                onClick={() => handleDownload(f.format_id)}
+                style={{
+                  padding: "10px 16px",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  width: "100%",
+                  backgroundColor: "#f3f4f6",
+                  color: "#171717",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 15,
+                }}
+              >
+                <span>{f.quality} ({f.ext})</span>
+                <span style={{ opacity: 0.7, fontSize: 14 }}>{f.filesize_label}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
