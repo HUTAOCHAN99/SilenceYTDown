@@ -149,13 +149,15 @@ export default function Home() {
   };
 
   const handleDownload = (formatId: string) => {
+    const titleParam = info?.title ? `&title=${encodeURIComponent(info.title)}` : "";
     // eslint-disable-next-line react-hooks/immutability
-    window.location.href = `/api/download?url=${encodeURIComponent(url)}&format_id=${formatId}`;
+    window.location.href = `/api/download?url=${encodeURIComponent(url)}&format_id=${formatId}${titleParam}`;
   };
 
   const handleDownloadAudio = () => {
+    const titleParam = info?.title ? `&title=${encodeURIComponent(info.title)}` : "";
     // eslint-disable-next-line react-hooks/immutability
-    window.location.href = `/api/download?url=${encodeURIComponent(url)}&type=audio&quality=${audioQuality}`;
+    window.location.href = `/api/download?url=${encodeURIComponent(url)}&type=audio&quality=${audioQuality}${titleParam}`;
   };
 
   const tabButtonStyle = (active: boolean): React.CSSProperties => ({

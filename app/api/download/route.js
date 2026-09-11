@@ -30,6 +30,35 @@ function runProcess(cmd, args) {
   });
 }
 
+// Bersihkan judul video jadi nama file yang aman di semua OS
+// (hapus karakter ilegal, rapikan spasi, batasi panjang)
+function sanitizeTitle(rawTitle) {
+  if (!rawTitle) return "";
+
+  return rawTitle
+    .replace(/[\/\\:*?"<>|]/g, "") // karakter terlarang di Windows/Unix
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 150); // jaga-jaga biar gak kena limit panjang filename OS
+}
+
+// Bangun header Content-Disposition dengan:
+// - filename: fallback ASCII-only (buat browser/klien lama)
+// - filename*: UTF-8 sesuai RFC 5987 (buat judul dgn emoji/non-latin)
+function buildContentDisposition(rawTitle, fallbackBaseName, ext) {
+  const clean = sanitizeTitle(rawTitle);
+  const base = clean || fallbackBaseName;
+  const filenameWithExt = `${base}.${ext}`;
+
+  const asciiFallback = filenameWithExt
+    .replace(/[^\x20-\x7E]/g, "_") // ganti karakter non-ASCII biar header tetap valid
+    .replace(/"/g, "");
+
+  const encodedUtf8 = encodeURIComponent(filenameWithExt);
+
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedUtf8}`;
+}
+
 // Pilihan kualitas audio yang didukung, sesuai dropdown di UI
 const AUDIO_QUALITY_PRESETS = {
   "m4a-48": { ext: "m4a", codec: "aac", bitrate: "48k", contentType: "audio/mp4" },
@@ -43,6 +72,7 @@ export async function GET(request) {
   const formatId = searchParams.get("format_id");
   const type = searchParams.get("type") || "video";
   const audioQualityParam = searchParams.get("quality") || "mp3-128";
+  const title = searchParams.get("title") || "";
 
   if (!url) {
     return NextResponse.json(
@@ -52,13 +82,13 @@ export async function GET(request) {
   }
 
   if (type === "audio") {
-    return handleAudioDownload(url, audioQualityParam);
+    return handleAudioDownload(url, audioQualityParam, title);
   }
 
-  return handleVideoDownload(url, formatId);
+  return handleVideoDownload(url, formatId, title);
 }
 
-async function handleAudioDownload(url, audioQualityParam) {
+async function handleAudioDownload(url, audioQualityParam, title) {
   const preset = AUDIO_QUALITY_PRESETS[audioQualityParam] || AUDIO_QUALITY_PRESETS["mp3-128"];
 
   const jobId = crypto.randomUUID();
@@ -137,7 +167,7 @@ async function handleAudioDownload(url, audioQualityParam) {
 
     return new NextResponse(webStream, {
       headers: {
-        "Content-Disposition": `attachment; filename="audio.${preset.ext}"`,
+        "Content-Disposition": buildContentDisposition(title, "audio", preset.ext),
         "Content-Type": preset.contentType,
         "Content-Length": String(stat.size),
       },
@@ -152,7 +182,7 @@ async function handleAudioDownload(url, audioQualityParam) {
   }
 }
 
-async function handleVideoDownload(url, formatId) {
+async function handleVideoDownload(url, formatId, title) {
   // Folder sementara unik per request, biar request paralel nggak tabrakan
   const jobId = crypto.randomUUID();
   const tmpDir = path.join(os.tmpdir(), `silenceytdl-${jobId}`);
@@ -224,7 +254,7 @@ async function handleVideoDownload(url, formatId) {
 
     return new NextResponse(webStream, {
       headers: {
-        "Content-Disposition": `attachment; filename="video.mp4"`,
+        "Content-Disposition": buildContentDisposition(title, "video", "mp4"),
         "Content-Type": "video/mp4",
         "Content-Length": String(stat.size),
       },
