@@ -56,17 +56,28 @@ export async function GET(request) {
           ? rawSize + (isVideoOnly ? bestAudioSize : 0)
           : 0;
 
+        // Bulatkan fps (yt-dlp kadang kasih desimal spt 29.97/59.94)
+        const fps = f.fps ? Math.round(f.fps) : null;
+        const baseQuality = f.format_note || f.resolution || "unknown";
+        // Tambahkan label fps kalau belum otomatis ada di format_note (mis. "1080p" -> "1080p 60fps")
+        const quality =
+          fps && !baseQuality.toString().includes(String(fps))
+            ? `${baseQuality} ${fps}fps`
+            : baseQuality;
+
         return {
           format_id: f.format_id,
-          quality: f.format_note || f.resolution || "unknown",
+          quality,
+          fps,
           ext: f.ext,
           filesize: totalBytes || null,
           filesize_label: formatBytes(totalBytes) || "Ukuran tidak diketahui",
         };
       })
-      // buang duplikat kualitas yang sama
+      // buang duplikat kualitas+fps yang sama
       .filter(
-        (f, i, arr) => arr.findIndex((x) => x.quality === f.quality) === i,
+        (f, i, arr) =>
+          arr.findIndex((x) => x.quality === f.quality && x.fps === f.fps) === i,
       )
       // urutkan dari kualitas terbesar ke terkecil berdasarkan ukuran
       .sort((a, b) => (b.filesize || 0) - (a.filesize || 0));

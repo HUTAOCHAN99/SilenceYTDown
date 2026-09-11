@@ -14,13 +14,15 @@ export async function GET(request) {
   const args = [
     "-o", "-", // output ke stdout
     "--no-playlist",
+    "--merge-output-format", "mp4", // paksa hasil gabungan jadi container mp4 asli
   ];
 
   if (formatId) {
-  args.push("-f", `${formatId}+bestaudio/best`);
-} else {
-  args.push("-f", "best");
-}
+    // Ambil audio m4a/aac dulu (kompatibel penuh dg mp4), baru fallback ke bestaudio
+    args.push("-f", `${formatId}+bestaudio[ext=m4a]/${formatId}+bestaudio/best`);
+  } else {
+    args.push("-f", "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
+  }
 
   args.push(url);
 
