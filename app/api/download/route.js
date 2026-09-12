@@ -14,7 +14,7 @@
 // rate limit (429) dari YouTube.
 
 import { NextResponse } from "next/server";
-import { downloadQueue } from "@/lib/queue";
+import { getDownloadQueue } from "@/lib/queue";
 
 export async function POST(request) {
   let body;
@@ -31,6 +31,10 @@ export async function POST(request) {
   }
 
   try {
+    // getDownloadQueue() baru benar-benar konek ke Redis di sini (saat ada
+    // request masuk), bukan saat file ini di-import -- lihat komentar di lib/queue.js.
+    const downloadQueue = getDownloadQueue();
+
     // job.id akan jadi identitas unik yang dipakai lagi nanti untuk
     // mengecek status/progress lewat endpoint terpisah (mis. GET /api/download/[jobId]).
     const job = await downloadQueue.add("download", {

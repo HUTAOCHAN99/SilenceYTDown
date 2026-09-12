@@ -14,7 +14,12 @@ import { spawn } from "child_process";
 import fs from "fs/promises";
 import os from "os";
 import path from "path";
-import { connection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
+import { getConnection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
+
+// worker.js adalah proses long-running yang start SETELAH Railway inject env
+// var, jadi aman untuk langsung resolve koneksi di sini (beda kondisi dengan
+// lib/queue.js yang di-import saat next build).
+const connection = getConnection();
 
 const AUDIO_QUALITY_PRESETS = {
   "m4a-48": { ext: "m4a", codec: "aac", bitrate: "48k" },
