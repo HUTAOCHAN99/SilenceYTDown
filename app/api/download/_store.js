@@ -13,13 +13,14 @@ const jobs = new Map();
 export function createJob(jobId) {
   const job = {
     id: jobId,
-    status: "downloading", // "downloading" | "converting" | "done" | "error"
+    status: "queued", // "queued" | "downloading" | "converting" | "done" | "error"
     percent: 0,
     error: null,
     finalPath: null,
     contentType: null,
     filename: null,
     tmpDir: null,
+    queuePosition: null, // posisi di antrian single-worker saat status masih "queued"
     createdAt: Date.now(),
     listeners: new Set(), // kumpulan fungsi callback buat push update SSE
   };

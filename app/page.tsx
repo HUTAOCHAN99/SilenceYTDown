@@ -121,11 +121,14 @@ function AudioQualityDropdown({
 function DownloadProgressBar({ status, percent }: { status: string; percent: number }) {
   const isConverting = status === "converting";
   const isDone = status === "done";
+  const isQueued = status === "queued";
   const label = isDone
     ? "Selesai! Menyiapkan file..."
     : isConverting
       ? "Memproses file di server..."
-      : `Mengunduh di server... ${Math.round(percent)}%`;
+      : isQueued
+        ? "Menunggu antrian... (ada proses lain sedang berjalan)"
+        : `Mengunduh di server... ${Math.round(percent)}%`;
 
   return (
     <div style={{ marginTop: 12 }}>
@@ -141,12 +144,12 @@ function DownloadProgressBar({ status, percent }: { status: string; percent: num
       >
         <div
           style={{
-            width: `${isConverting || isDone ? 100 : percent}%`,
+            width: `${isConverting || isDone ? 100 : isQueued ? 15 : percent}%`,
             height: "100%",
             backgroundColor: isDone ? "#16a34a" : "#2563eb",
-            // Saat "converting" durasinya nggak pasti (ffmpeg nggak dikasih progress
-            // granular di sini), jadi kasih animasi pulse biar tetap kelihatan "hidup".
-            animation: isConverting ? "silenceyt-pulse 1.2s ease-in-out infinite" : undefined,
+            // Saat "converting"/"queued" durasinya nggak pasti, jadi kasih animasi
+            // pulse biar tetap kelihatan "hidup" alih-alih diam di satu angka.
+            animation: isConverting || isQueued ? "silenceyt-pulse 1.2s ease-in-out infinite" : undefined,
             transition: "width 0.2s ease, background-color 0.2s ease",
           }}
         />
