@@ -1,0 +1,46 @@
+# Dockerfile.worker
+#
+# Image KHUSUS untuk Worker Service. Terpisah dari Dockerfile utama (yang
+# dipakai Web Service / Next.js) karena worker tidak butuh `next build`,
+# tapi tetap butuh Python3 + ffmpeg + binary yt-dlp untuk bisa spawn proses
+# download lewat child_process.
+#
+# Di Railway, service ini dibuat sebagai SERVICE BARU yang menunjuk ke repo
+# yang sama, tapi dengan "Dockerfile Path" diarahkan ke Dockerfile.worker ini
+# (lihat panduan di akhir jawaban).
+
+FROM node:20-slim
+
+# python3       -> dibutuhkan yt-dlp untuk beberapa extractor
+# ffmpeg        -> dibutuhkan untuk merge video+audio & konversi format audio
+# curl/ca-certs -> dibutuhkan untuk mengunduh binary yt-dlp saat build image
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    python3 \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install yt-dlp sebagai binary standalone versi TERBARU (selalu tarik ulang
+# di setiap build image, bukan versi yang di-pin, karena YouTube sering
+# berubah dan yt-dlp perlu update mengikuti).
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
+
+WORKDIR /app
+
+# Install dependency Node.js dulu (cache layer terpisah dari source code
+# supaya rebuild lebih cepat kalau cuma source yang berubah).
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+# Worker hanya butuh dua hal ini untuk berjalan (tidak perlu seluruh folder
+# app/ milik Next.js).
+COPY lib ./lib
+COPY worker.js ./worker.js
+
+ENV NODE_ENV=production
+
+# Worker TIDAK melayani HTTP request, jadi tidak perlu EXPOSE port.
+# Proses ini harus tetap hidup terus-menerus (long-running), bukan sekali jalan.
+CMD ["node", "worker.js"]

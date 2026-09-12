@@ -2,13 +2,17 @@
   "name": "yt-downloader",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "worker": "node worker.js",
     "lint": "eslint"
   },
   "dependencies": {
+    "bullmq": "^5.34.0",
+    "ioredis": "^5.4.1",
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8"
