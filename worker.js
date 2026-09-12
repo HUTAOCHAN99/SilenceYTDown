@@ -69,6 +69,48 @@ function parseProgressPercent(line) {
   return match ? Math.min(99, parseFloat(match[1])) : null;
 }
 
+// Format selector dengan cap tinggi maksimum + fallback otomatis kalau video
+// nggak punya format setinggi itu. Dipakai jalur bot (maxHeight), beda dengan
+// jalur web UI yang biasanya sudah kasih formatId spesifik hasil pilihan user.
+function buildHeightCappedFormatSelector(maxHeight) {
+  return [
+    `bv*[height<=${maxHeight}][ext=mp4]+ba[ext=m4a]`,
+    `bv*[height<=${maxHeight}]+ba`,
+    `b[height<=${maxHeight}][ext=mp4]`,
+    `b[height<=${maxHeight}]`,
+    "best",
+  ].join("/");
+}
+
+// Varian runProcess yang mengembalikan stdout utuh (bukan per-baris lewat
+// callback) — dipakai untuk ambil judul video secara cepat tanpa download.
+function runProcessCollectStdout(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args);
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    proc.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    proc.on("error", (err) => reject(err));
+    proc.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+async function fetchVideoTitle(url) {
+  try {
+    const result = await runProcessCollectStdout("yt-dlp", [
+      "--no-playlist",
+      "--skip-download",
+      "--print", "%(title)s",
+      url,
+    ]);
+    if (result.code !== 0) return "";
+    return result.stdout?.trim?.() || "";
+  } catch {
+    return "";
+  }
+}
+
 async function processAudioJob(job, tmpDir) {
   const { url, quality } = job.data;
   const preset = AUDIO_QUALITY_PRESETS[quality] || AUDIO_QUALITY_PRESETS["mp3-128"];
@@ -110,12 +152,25 @@ async function processAudioJob(job, tmpDir) {
 }
 
 async function processVideoJob(job, tmpDir) {
-  const { url, formatId } = job.data;
+  const { url, formatId, maxHeight } = job.data;
+  let { title } = job.data;
   const mergedPath = path.join(tmpDir, "merged.mp4");
   const finalPath = path.join(tmpDir, "final.mp4");
 
+  // Jalur bot tidak kirim title dari muka (biar request awal cepat dibalas).
+  // Judul diambil di sini -- di dalam kuota antrean -- bukan di luar antrean.
+  if (!title) {
+    title = await fetchVideoTitle(url);
+  }
+
   const ytdlpArgs = ["-o", mergedPath, "--no-playlist", "--merge-output-format", "mp4", "--newline"];
-  ytdlpArgs.push("-f", formatId ? `${formatId}+bestaudio/best` : "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
+  if (formatId) {
+    ytdlpArgs.push("-f", `${formatId}+bestaudio/best`);
+  } else if (maxHeight) {
+    ytdlpArgs.push("-f", buildHeightCappedFormatSelector(maxHeight));
+  } else {
+    ytdlpArgs.push("-f", "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
+  }
   ytdlpArgs.push(url);
 
   const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {
@@ -136,7 +191,7 @@ async function processVideoJob(job, tmpDir) {
     throw new Error(`ffmpeg gagal (faststart): ${ffmpegResult.stderr.slice(-1500)}`);
   }
 
-  const filename = `${sanitizeTitle(job.data.title) || "video"}.mp4`;
+  const filename = `${sanitizeTitle(title) || "video"}.mp4`;
   return { finalPath, contentType: "video/mp4", filename };
 }
 

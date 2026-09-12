@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
-import crypto from "crypto";
-import { createJob, updateJob } from "../../download/_store";
-import { enqueueTask } from "../../download/_queue";
-import { processVideoJob, fetchVideoTitle } from "../../download/_pipeline";
+import { getDownloadQueue } from "@/lib/queue";
 
 // Endpoint ini didesain buat dipanggil dari bot (mis. bot WhatsApp) waktu
-// user ketik "!dl <link>". Bedanya dengan /api/download/start:
+// user ketik "!dl <link>". Bedanya dengan /api/download:
 // - Nggak perlu panggil /api/info dulu buat milih format_id secara manual.
 // - Kualitas otomatis di-cap ke MAX_HEIGHT_DEFAULT (1080p), tapi tetap
 //   fallback otomatis ke kualitas tertinggi yang tersedia kalau videonya
 //   memang cuma ada di resolusi yang lebih rendah.
-// - Job selalu lewat antrian single-worker yang sama dengan web UI, jadi
-//   nggak akan ada 2 proses yt-dlp/ffmpeg jalan bersamaan biarpun banyak
-//   user WA nge-spam "!dl" bersamaan.
+// - Job masuk ke QUEUE REDIS/BULLMQ YANG SAMA dengan web UI (lihat lib/queue.js),
+//   jadi nggak akan ada 2 proses yt-dlp/ffmpeg jalan bersamaan biarpun web
+//   dan bot dipakai bersamaan (Worker Service tetap concurrency: 1).
 
 const MAX_HEIGHT_DEFAULT = 1080;
 
@@ -52,39 +49,35 @@ export async function POST(request) {
     return NextResponse.json({ error: "Link bukan URL YouTube yang valid" }, { status: 400 });
   }
 
-  const jobId = crypto.randomUUID();
-  createJob(jobId);
+  try {
+    const downloadQueue = getDownloadQueue();
 
-  const queuePosition = enqueueTask(
-    async () => {
-      try {
-        // Judul diambil di sini (bukan sebelum enqueue) supaya request awal
-        // tetap cepat dibalas -- pengambilan judul ini kepakai kuota antrian,
-        // bukan nambah beban di luar antrian.
-        const title = await fetchVideoTitle(url);
-        await processVideoJob(jobId, url, { maxHeight: MAX_HEIGHT_DEFAULT, title });
-      } catch (err) {
-        console.error(err);
-        updateJob(jobId, {
-          status: "error",
-          error: "Terjadi kesalahan saat memproses unduhan",
-        });
-      }
-    },
-    {
-      label: `bot:${jobId}`,
-      onQueued: (position) => updateJob(jobId, { status: "queued", percent: 0, queuePosition: position }),
-    },
-  );
+    // Sengaja TIDAK fetch title di sini -- biar request bot ini tetap cepat
+    // dibalas. Judul diambil oleh worker DI DALAM kuota antrean (lihat
+    // fetchVideoTitle() di worker.js), sama seperti perilaku versi lama.
+    const job = await downloadQueue.add("download", {
+      url,
+      type: "video",
+      maxHeight: MAX_HEIGHT_DEFAULT,
+    });
 
-  return NextResponse.json({
-    jobId,
-    status: "queued",
-    queuePosition,
-    pendingAhead: Math.max(0, queuePosition - 1),
-    maxHeight: MAX_HEIGHT_DEFAULT,
-    // Endpoint yang perlu di-poll bot buat cek progress, lalu ambil filenya.
-    statusUrl: `/api/bot/status/${jobId}`,
-    fileUrl: `/api/download/file/${jobId}`,
-  });
+    const queuePosition = await downloadQueue.getWaitingCount();
+
+    return NextResponse.json({
+      jobId: job.id,
+      status: "queued",
+      queuePosition,
+      pendingAhead: Math.max(0, queuePosition - 1),
+      maxHeight: MAX_HEIGHT_DEFAULT,
+      // Endpoint yang perlu di-poll bot buat cek progress, lalu ambil filenya.
+      statusUrl: `/api/bot/status/${job.id}`,
+      fileUrl: `/api/download/file/${job.id}`,
+    });
+  } catch (err) {
+    console.error("Gagal menambahkan job bot ke queue:", err);
+    return NextResponse.json(
+      { error: "Gagal memproses permintaan, coba lagi sebentar lagi" },
+      { status: 500 },
+    );
+  }
 }
