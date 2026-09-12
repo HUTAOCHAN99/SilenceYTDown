@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { getCookieArgs } from "../download/_cookies";
+import { looksLikeBotCheck, notifyCookiesExpired } from "../download/_notify";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +21,7 @@ export async function GET(request) {
     const { stdout } = await execFileAsync("yt-dlp", [
       "-J", // dump info sebagai JSON
       "--no-playlist",
+      ...getCookieArgs(),
       url,
     ]);
 
@@ -178,6 +181,9 @@ export async function GET(request) {
     });
   } catch (err) {
     console.error(err);
+    if (looksLikeBotCheck(err?.stderr || err?.message || "")) {
+      notifyCookiesExpired("(saat ambil info video)");
+    }
     return NextResponse.json(
       { error: "Gagal mengambil info video" },
       { status: 500 },

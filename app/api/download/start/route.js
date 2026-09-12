@@ -5,6 +5,8 @@ import os from "os";
 import path from "path";
 import crypto from "crypto";
 import { createJob, updateJob } from "../_store";
+import { getCookieArgs } from "../_cookies";
+import { looksLikeBotCheck, notifyCookiesExpired } from "../_notify";
 
 // Bersihkan judul video jadi nama file yang aman di semua OS
 function sanitizeTitle(rawTitle) {
@@ -120,6 +122,7 @@ async function processAudioJob(jobId, url, qualityParam, title) {
     "-o", sourceTemplate,
     "--no-playlist",
     "--newline", // paksa progress ditulis per baris baru, bukan \r overwrite
+    ...getCookieArgs(),
     url,
   ];
 
@@ -129,6 +132,9 @@ async function processAudioJob(jobId, url, qualityParam, title) {
 
   if (ytdlpResult.code !== 0) {
     console.error(`yt-dlp gagal (audio): ${ytdlpResult.stderr}`);
+    if (looksLikeBotCheck(ytdlpResult.stderr)) {
+      notifyCookiesExpired("(saat proses download audio)");
+    }
     fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     updateJob(jobId, { status: "error", error: "Gagal mengunduh audio dari sumbernya" });
     return;
@@ -185,6 +191,7 @@ async function processVideoJob(jobId, url, formatId, title) {
     "--no-playlist",
     "--merge-output-format", "mp4",
     "--newline",
+    ...getCookieArgs(),
   ];
 
   if (formatId) {
@@ -203,6 +210,9 @@ async function processVideoJob(jobId, url, formatId, title) {
 
   if (ytdlpResult.code !== 0) {
     console.error(`yt-dlp gagal: ${ytdlpResult.stderr}`);
+    if (looksLikeBotCheck(ytdlpResult.stderr)) {
+      notifyCookiesExpired("(saat proses download video)");
+    }
     fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     updateJob(jobId, { status: "error", error: "Gagal mengunduh video dari sumbernya" });
     return;
