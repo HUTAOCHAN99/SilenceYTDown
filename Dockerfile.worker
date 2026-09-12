@@ -41,6 +41,12 @@ COPY worker.js ./worker.js
 
 ENV NODE_ENV=production
 
-# Worker TIDAK melayani HTTP request, jadi tidak perlu EXPOSE port.
+# Worker sekarang JUGA melayani HTTP request kecil untuk serve file hasil
+# download ke bot (lihat fileServer di worker.js) -- karena itu perlu EXPOSE
+# port. Railway inject PORT secara dinamis, aktifkan "Generate Domain" di
+# Settings > Networking pada Worker Service ini supaya dapat URL publik,
+# lalu isi env WORKER_PUBLIC_URL di WEB SERVICE dengan URL tersebut.
+EXPOSE 8080
+
 # Proses ini harus tetap hidup terus-menerus (long-running), bukan sekali jalan.
 CMD ["node", "worker.js"]

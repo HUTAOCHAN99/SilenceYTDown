@@ -69,9 +69,12 @@ export async function POST(request) {
       queuePosition,
       pendingAhead: Math.max(0, queuePosition - 1),
       maxHeight: MAX_HEIGHT_DEFAULT,
-      // Endpoint yang perlu di-poll bot buat cek progress, lalu ambil filenya.
+      // Endpoint yang perlu di-poll bot buat cek progress. `fileUrl` BELUM
+      // ada di sini (job baru masuk antrean) -- baru muncul di response
+      // /api/bot/status/{jobId} setelah status jadi "done", dan mengarah
+      // langsung ke Worker Service (bukan ke Web Service ini), karena
+      // file-nya memang ada di container worker.
       statusUrl: `/api/bot/status/${job.id}`,
-      fileUrl: `/api/download/file/${job.id}`,
     });
   } catch (err) {
     console.error("Gagal menambahkan job bot ke queue:", err);

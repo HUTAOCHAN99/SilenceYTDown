@@ -11,7 +11,9 @@
 
 import { Worker } from "bullmq";
 import { spawn } from "child_process";
+import { createReadStream } from "fs";
 import fs from "fs/promises";
+import http from "http";
 import os from "os";
 import path from "path";
 import { getConnection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
@@ -195,6 +197,38 @@ async function processVideoJob(job, tmpDir) {
   return { finalPath, contentType: "video/mp4", filename };
 }
 
+// --- Penyimpanan file hasil download, di memori worker ini saja ---
+//
+// Web Service dan Worker Service adalah container terpisah di Railway (tidak
+// share filesystem), jadi kita TIDAK bisa balikin file lewat Web Service.
+// Solusinya: worker ini sendiri yang serve file-nya lewat HTTP server kecil
+// di bawah (lihat fileServer), dan Web Service cukup kasih tahu bot alamat
+// worker (`WORKER_PUBLIC_URL`) buat ambil file itu langsung dari sini.
+//
+// `finalPath` SENGAJA tidak dikembalikan lewat return value job (yang akan
+// tersimpan di Redis & bisa dibaca dari Web Service) -- itu path lokal di
+// container worker dan tidak berguna/aman untuk dikirim ke luar. Cukup
+// disimpan di Map lokal ini, dan Web Service cuma tahu ada `fileUrl`.
+const completedFiles = new Map(); // jobId -> { finalPath, filename, contentType, tmpDir, createdAt }
+const FILE_TTL_MS = 30 * 60 * 1000; // file yang tidak diambil bot dalam 30 menit akan dibuang
+
+function cleanupCompletedFile(jobId) {
+  const entry = completedFiles.get(jobId);
+  if (!entry) return;
+  completedFiles.delete(jobId);
+  fs.rm(entry.tmpDir, { recursive: true, force: true }).catch(() => {});
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [jobId, entry] of completedFiles) {
+    if (now - entry.createdAt > FILE_TTL_MS) {
+      console.log(`[worker] file job ${jobId} kedaluwarsa (tidak diambil), dibuang`);
+      cleanupCompletedFile(jobId);
+    }
+  }
+}, 5 * 60 * 1000).unref?.();
+
 // --- Fungsi utama yang dipanggil BullMQ untuk setiap job ---
 async function handleJob(job) {
   const tmpDir = path.join(os.tmpdir(), `silenceytdl-${job.id}`);
@@ -208,21 +242,21 @@ async function handleJob(job) {
 
     await job.updateProgress({ status: "done", percent: 100 });
 
-    // CATATAN: file hasil download saat ini ada di `result.finalPath`, di
-    // dalam CONTAINER WORKER — bukan container Web Service. Karena keduanya
-    // adalah service terpisah di Railway, mereka TIDAK berbagi filesystem.
-    // Sesuaikan bagian ini dengan strategi penyimpanan project-mu, misalnya:
-    //   1. Upload finalPath ke object storage (S3/R2/Cloudinary) lalu simpan
-    //      URL-nya sebagai returnvalue job, ATAU
-    //   2. Serve file langsung dari Worker Service lewat HTTP server kecil
-    //      yang berjalan di worker.js (butuh expose port worker di Railway).
-    // Return value job disimpan BullMQ dan bisa dibaca dari sisi Web Service
-    // lewat `job.returnvalue` setelah job selesai.
+    // Daftarkan file ke fileServer lokal (lihat definisi di atas) supaya
+    // bisa langsung diambil bot lewat GET {WORKER_PUBLIC_URL}/files/{job.id}.
+    completedFiles.set(job.id, {
+      finalPath: result.finalPath,
+      filename: result.filename,
+      contentType: result.contentType,
+      tmpDir,
+      createdAt: Date.now(),
+    });
+
+    // Return value ini disimpan BullMQ (Redis) dan dibaca Web Service lewat
+    // `job.returnvalue` -- sengaja tidak menyertakan path lokal di sini.
     return {
       contentType: result.contentType,
       filename: result.filename,
-      // path ini HANYA valid di dalam container worker, jangan dikirim ke user secara mentah
-      tmpDir,
     };
   } catch (err) {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
@@ -257,12 +291,92 @@ worker.on("error", (err) => {
   console.error("[worker] error koneksi:", err.message || err);
 });
 
+// --- HTTP server kecil khusus buat serve file hasil download ---
+//
+// Ini SATU-SATUNYA cara bot bisa ambil file-nya, karena file cuma ada di
+// container worker ini. Railway inject PORT secara dinamis kalau service ini
+// diberi domain publik (aktifkan "Generate Domain" di Settings > Networking
+// pada Worker Service), lalu isi env WORKER_PUBLIC_URL di WEB SERVICE dengan
+// domain tsb, mis. https://xxxx.up.railway.app (tanpa trailing slash).
+//
+// Opsional tapi disarankan: set BOT_API_KEY (sama dengan yang dipakai di
+// /api/bot/dl) supaya orang lain yang kebetulan tahu/tebak jobId tidak bisa
+// ikut mengunduh filenya.
+function buildContentDisposition(filename) {
+  const asciiFallback = filename.replace(/[^\x20-\x7E]/g, "_").replace(/"/g, "");
+  const encodedUtf8 = encodeURIComponent(filename);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedUtf8}`;
+}
+
+function isFileRequestAuthorized(req) {
+  const expected = process.env.BOT_API_KEY;
+  if (!expected) return true; // sama seperti /api/bot/dl: publik kalau tidak diset
+  const url = new URL(req.url, "http://localhost");
+  const provided =
+    req.headers["x-api-key"] ||
+    req.headers["authorization"]?.replace(/^Bearer\s+/i, "") ||
+    url.searchParams.get("key");
+  return provided === expected;
+}
+
+const fileServer = http.createServer(async (req, res) => {
+  const match = req.url.match(/^\/files\/([^/?]+)/);
+
+  if (req.method !== "GET" || !match) {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Not found" }));
+    return;
+  }
+
+  if (!isFileRequestAuthorized(req)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Unauthorized" }));
+    return;
+  }
+
+  const jobId = decodeURIComponent(match[1]);
+  const entry = completedFiles.get(jobId);
+
+  if (!entry) {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "File tidak ditemukan, sudah diambil, atau sudah kedaluwarsa" }));
+    return;
+  }
+
+  try {
+    const stat = await fs.stat(entry.finalPath);
+    res.writeHead(200, {
+      "Content-Type": entry.contentType,
+      "Content-Length": stat.size,
+      "Content-Disposition": buildContentDisposition(entry.filename),
+    });
+    const stream = createReadStream(entry.finalPath);
+    stream.pipe(res);
+    stream.on("close", () => cleanupCompletedFile(jobId));
+    stream.on("error", (err) => {
+      console.error(`[worker] error streaming file job ${jobId}:`, err.message);
+      cleanupCompletedFile(jobId);
+    });
+  } catch (err) {
+    console.error(`[worker] gagal baca file job ${jobId}:`, err.message);
+    cleanupCompletedFile(jobId);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Gagal membaca file" }));
+  }
+});
+
+const PORT = process.env.PORT || 8080;
+fileServer.listen(PORT, () => {
+  console.log(`[worker] file server siap di port ${PORT} (GET /files/:jobId)`);
+});
+
 // Railway mengirim SIGTERM saat mau redeploy/restart service. Tutup worker
 // dengan rapi supaya job yang sedang berjalan tidak korup di tengah jalan
 // (BullMQ akan menandainya "stalled" lalu bisa diambil ulang kalau memungkinkan).
 process.on("SIGTERM", async () => {
   console.log("[worker] menerima SIGTERM, menutup worker...");
   await worker.close();
+  fileServer.close();
   process.exit(0);
 });
 
