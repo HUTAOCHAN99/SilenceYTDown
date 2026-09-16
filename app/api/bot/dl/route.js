@@ -13,6 +13,14 @@ import { getDownloadQueue } from "@/lib/queue";
 
 const MAX_HEIGHT_DEFAULT = 1080;
 
+// Batas aman buat maxHeight yang dikirim bot -- nolak nilai ngawur
+// (negatif, 99999, atau string) tanpa bikin worker bingung.
+const ALLOWED_HEIGHTS = [360, 480, 720, 1080, 1440, 2160];
+
+// Harus sama persis dengan AUDIO_QUALITY_PRESETS di worker.js -- kalau
+// nilainya nggak dikenal, worker jatuh ke "mp3-128" (lihat processAudioJob).
+const ALLOWED_AUDIO_QUALITY = ["m4a-48", "m4a-128", "mp3-128"];
+
 // Pola link YouTube yang umum: youtube.com/watch, youtu.be/, shorts, embed, dll.
 const YOUTUBE_URL_RE =
   /^(https?:\/\/)?(www\.|m\.)?(youtube\.com|youtu\.be|music\.youtube\.com)\/.+/i;
@@ -49,17 +57,35 @@ export async function POST(request) {
     return NextResponse.json({ error: "Link bukan URL YouTube yang valid" }, { status: 400 });
   }
 
+  // --- Opsi tambahan dari bot (semuanya OPSIONAL & backward-compatible:
+  // body lama yang cuma isi { url } tetap jalan persis seperti dulu) ---
+  //
+  // type=audio ditambahkan buat command "!dl <link> mp3" di bot WhatsApp.
+  // Worker sudah lama dukung ini lewat processAudioJob(), cuma endpoint bot
+  // ini yang dulunya hardcode "video" sehingga jalur audio nggak kepakai.
+  const type = body?.type === "audio" ? "audio" : "video";
+
+  const requestedHeight = Number(body?.maxHeight);
+  const maxHeight = ALLOWED_HEIGHTS.includes(requestedHeight)
+    ? requestedHeight
+    : MAX_HEIGHT_DEFAULT;
+
+  const quality = ALLOWED_AUDIO_QUALITY.includes(body?.quality)
+    ? body.quality
+    : "mp3-128";
+
   try {
     const downloadQueue = getDownloadQueue();
 
     // Sengaja TIDAK fetch title di sini -- biar request bot ini tetap cepat
     // dibalas. Judul diambil oleh worker DI DALAM kuota antrean (lihat
     // fetchVideoTitle() di worker.js), sama seperti perilaku versi lama.
-    const job = await downloadQueue.add("download", {
-      url,
-      type: "video",
-      maxHeight: MAX_HEIGHT_DEFAULT,
-    });
+    const job = await downloadQueue.add(
+      "download",
+      type === "audio"
+        ? { url, type: "audio", quality }
+        : { url, type: "video", maxHeight },
+    );
 
     const queuePosition = await downloadQueue.getWaitingCount();
 
@@ -68,7 +94,11 @@ export async function POST(request) {
       status: "queued",
       queuePosition,
       pendingAhead: Math.max(0, queuePosition - 1),
-      maxHeight: MAX_HEIGHT_DEFAULT,
+      type,
+      // Dibalikin apa adanya biar bot bisa lihat nilai mana yang BENERAN
+      // dipakai -- kalau dia kirim maxHeight ngawur, di sini kelihatan
+      // bahwa yang dipakai default, bukan yang dia minta.
+      ...(type === "audio" ? { quality } : { maxHeight }),
       // Endpoint yang perlu di-poll bot buat cek progress. `fileUrl` BELUM
       // ada di sini (job baru masuk antrean) -- baru muncul di response
       // /api/bot/status/{jobId} setelah status jadi "done", dan mengarah
