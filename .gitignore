@@ -42,4 +42,6 @@ next-env.d.ts
 cookies.txt
 fire-test.js
 data
-hasil.mp3
+*.mp3
+*.wav
+*.mp4
