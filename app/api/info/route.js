@@ -122,7 +122,7 @@ export async function GET(request) {
       (f) => f.vcodec !== "none" && f.ext === "mp4", // video-only atau gabungan, asal mp4
     );
 
-    const formats = (
+    const rawFormats = (
       await Promise.all(
         candidateFormats.map(async (f) => {
         // Urutan akurasi: filesize asli (pasti) > HEAD Content-Length (byte
@@ -162,22 +162,33 @@ export async function GET(request) {
         }),
       )
     )
-      // buang duplikat yang benar-benar identik: kualitas + fps + codec sama persis
-      .filter(
-        (f, i, arr) =>
-          arr.findIndex(
-            (x) => x.quality === f.quality && x.fps === f.fps && x.codec === f.codec,
-          ) === i,
-      )
-      // urutkan: resolusi tertinggi dulu, lalu fps tertinggi, lalu codec paling kompatibel duluan
-      .sort((a, b) => {
-        if ((b.height || 0) !== (a.height || 0)) return (b.height || 0) - (a.height || 0);
-        if ((b.fps || 0) !== (a.fps || 0)) return (b.fps || 0) - (a.fps || 0);
-        const ap = CODEC_PRIORITY[a.codec] ?? 9;
-        const bp = CODEC_PRIORITY[b.codec] ?? 9;
-        if (ap !== bp) return ap - bp;
-        return (b.filesize || 0) - (a.filesize || 0);
-      });
+      // Satu resolusi (height) sering punya beberapa varian teknis (mis. 720p
+      // 30fps H.264 DAN 720p 60fps VP9) -- daripada tampilkan semua sebagai
+      // baris terpisah di dropdown (bikin bingung/kepanjangan), kita ambil
+      // SATU varian terbaik per resolusi saja. Hasilnya: tangga kualitas yang
+      // rapi (144p, 240p, 360p, 480p, 720p, dst -- sesuai yang tersedia utk
+      // video itu), bukan daftar penuh duplikat teknis.
+      .reduce((byHeight, f) => {
+        const key = f.height ?? f.quality; // fallback kalau video ini nggak punya metadata height
+        const current = byHeight.get(key);
+        if (!current) {
+          byHeight.set(key, f);
+          return byHeight;
+        }
+        // Skor: codec paling kompatibel menang duluan (H.264 > VP9 > AV1 > HEVC) --
+        // ini prioritas utama biar hasil download aman diputar di semua device/browser --
+        // baru fps lebih tinggi, lalu ukuran file lebih besar (biasanya = bitrate lebih baik)
+        const score = (x) => {
+          const codecRank = 3 - (CODEC_PRIORITY[x.codec] ?? 9); // dibalik biar makin besar makin bagus
+          return codecRank * 1000 + (x.fps || 0) * 10 + Math.min(9, Math.log10((x.filesize || 1) + 1));
+        };
+        byHeight.set(key, score(f) > score(current) ? f : current);
+        return byHeight;
+      }, new Map());
+
+    const formats = Array.from(rawFormats.values()).sort(
+      (a, b) => (b.height || 0) - (a.height || 0),
+    );
 
     return NextResponse.json({
       title: info.title,
