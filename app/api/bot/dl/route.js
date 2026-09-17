@@ -15,7 +15,7 @@ const MAX_HEIGHT_DEFAULT = 1080;
 
 // Batas aman buat maxHeight yang dikirim bot -- nolak nilai ngawur
 // (negatif, 99999, atau string) tanpa bikin worker bingung.
-const ALLOWED_HEIGHTS = [360, 480, 720, 1080, 1440, 2160];
+const ALLOWED_HEIGHTS = [144, 240, 360, 480, 720, 1080, 1440, 2160];
 
 // Harus sama persis dengan AUDIO_QUALITY_PRESETS di worker.js -- kalau
 // nilainya nggak dikenal, worker jatuh ke "mp3-128" (lihat processAudioJob).
