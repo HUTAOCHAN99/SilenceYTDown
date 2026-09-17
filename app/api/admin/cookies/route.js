@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
-import { COOKIES_PATH } from "../../download/_cookies";
+import { COOKIES_PATH } from "../../../../lib/cookies";
 
 // Taruh file ini di app/api/admin/cookies/route.js
 //

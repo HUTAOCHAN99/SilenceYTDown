@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { getCookieArgs } from "../download/_cookies";
-import { looksLikeBotCheck, notifyCookiesExpired } from "../download/_notify";
+import { getCookieArgs } from "../../../lib/cookies";
+import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
 
 const execFileAsync = promisify(execFile);
 

@@ -3,8 +3,8 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { updateJob } from "./_store";
-import { getCookieArgs } from "./_cookies";
-import { looksLikeBotCheck, notifyCookiesExpired } from "./_notify";
+import { getCookieArgs } from "../../../lib/cookies";
+import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
 
 // Bersihkan judul video jadi nama file yang aman di semua OS
 export function sanitizeTitle(rawTitle) {

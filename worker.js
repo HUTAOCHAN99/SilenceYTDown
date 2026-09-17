@@ -17,6 +17,13 @@ import http from "http";
 import os from "os";
 import path from "path";
 import { getConnection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
+import { getCookieArgs, ensureCookiesFromEnv } from "./lib/cookies.js";
+import { looksLikeBotCheck, notifyCookiesExpired } from "./lib/notify.js";
+
+// Materialisasi cookies dari YT_COOKIES_B64 (kalau di-set) sebelum job
+// pertama diproses -- lihat komentar di lib/cookies.js soal kenapa ini
+// perlu dan tidak bisa cuma mengandalkan /api/admin/cookies.
+ensureCookiesFromEnv();
 
 // worker.js adalah proses long-running yang start SETELAH Railway inject env
 // var, jadi aman untuk langsung resolve koneksi di sini (beda kondisi dengan
@@ -104,6 +111,7 @@ async function fetchVideoTitle(url) {
       "--no-playlist",
       "--skip-download",
       "--print", "%(title)s",
+      ...getCookieArgs(),
       url,
     ]);
     if (result.code !== 0) return "";
@@ -119,7 +127,14 @@ async function processAudioJob(job, tmpDir) {
   const sourceTemplate = path.join(tmpDir, "source.%(ext)s");
   const finalPath = path.join(tmpDir, `audio.${preset.ext}`);
 
-  const ytdlpArgs = ["-f", "bestaudio/best", "-o", sourceTemplate, "--no-playlist", "--newline", url];
+  const ytdlpArgs = [
+    "-f", "bestaudio/best",
+    "-o", sourceTemplate,
+    "--no-playlist",
+    "--newline",
+    ...getCookieArgs(),
+    url,
+  ];
 
   const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {
     const percent = parseProgressPercent(line);
@@ -127,6 +142,9 @@ async function processAudioJob(job, tmpDir) {
   });
 
   if (ytdlpResult.code !== 0) {
+    if (looksLikeBotCheck(ytdlpResult.stderr)) {
+      notifyCookiesExpired("(worker, saat proses download audio)");
+    }
     throw new Error(`yt-dlp gagal (audio): ${ytdlpResult.stderr.slice(-1500)}`);
   }
 
@@ -173,6 +191,7 @@ async function processVideoJob(job, tmpDir) {
   } else {
     ytdlpArgs.push("-f", "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
   }
+  ytdlpArgs.push(...getCookieArgs());
   ytdlpArgs.push(url);
 
   const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {
@@ -181,6 +200,9 @@ async function processVideoJob(job, tmpDir) {
   });
 
   if (ytdlpResult.code !== 0) {
+    if (looksLikeBotCheck(ytdlpResult.stderr)) {
+      notifyCookiesExpired("(worker, saat proses download video)");
+    }
     throw new Error(`yt-dlp gagal (video): ${ytdlpResult.stderr.slice(-1500)}`);
   }
 
