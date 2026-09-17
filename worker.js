@@ -20,6 +20,14 @@ import { getConnection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
 import { getCookieArgs, ensureCookiesFromEnv } from "./lib/cookies.js";
 import { looksLikeBotCheck, notifyCookiesExpired } from "./lib/notify.js";
 
+// yt-dlp (sejak rilis 2025.11.12) butuh JS runtime eksternal buat extractor
+// YouTube -- default-nya cuma nyoba Deno, yang TIDAK ada di image ini.
+// Base image worker (node:20-slim) sudah punya Node.js sendiri, dan Node
+// termasuk runtime yang didukung yt-dlp (minimal v20), jadi tinggal disuruh
+// pakai itu secara eksplisit -- tidak perlu install apa pun tambahan.
+// Lihat: https://github.com/yt-dlp/yt-dlp/wiki/EJS
+const JS_RUNTIME_ARGS = ["--js-runtimes", "node"];
+
 // Materialisasi cookies dari YT_COOKIES_B64 (kalau di-set) sebelum job
 // pertama diproses -- lihat komentar di lib/cookies.js soal kenapa ini
 // perlu dan tidak bisa cuma mengandalkan /api/admin/cookies.
@@ -112,6 +120,7 @@ async function fetchVideoTitle(url) {
       "--skip-download",
       "--print", "%(title)s",
       ...getCookieArgs(),
+      ...JS_RUNTIME_ARGS,
       url,
     ]);
     if (result.code !== 0) return "";
@@ -133,6 +142,7 @@ async function processAudioJob(job, tmpDir) {
     "--no-playlist",
     "--newline",
     ...getCookieArgs(),
+    ...JS_RUNTIME_ARGS,
     url,
   ];
 
@@ -192,6 +202,7 @@ async function processVideoJob(job, tmpDir) {
     ytdlpArgs.push("-f", "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
   }
   ytdlpArgs.push(...getCookieArgs());
+  ytdlpArgs.push(...JS_RUNTIME_ARGS);
   ytdlpArgs.push(url);
 
   const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {

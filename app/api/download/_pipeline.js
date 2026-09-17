@@ -6,6 +6,14 @@ import { updateJob } from "./_store";
 import { getCookieArgs } from "../../../lib/cookies";
 import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
 
+// yt-dlp (sejak rilis 2025.11.12) butuh JS runtime eksternal buat extractor
+// YouTube -- default-nya cuma nyoba Deno, yang TIDAK ada di image ini.
+// Base image (node:20-slim) sudah punya Node.js sendiri, dan Node termasuk
+// runtime yang didukung yt-dlp (minimal v20), jadi tinggal disuruh pakai itu
+// secara eksplisit -- tidak perlu install apa pun tambahan.
+// Lihat: https://github.com/yt-dlp/yt-dlp/wiki/EJS
+const JS_RUNTIME_ARGS = ["--js-runtimes", "node"];
+
 // Bersihkan judul video jadi nama file yang aman di semua OS
 export function sanitizeTitle(rawTitle) {
   if (!rawTitle) return "";
@@ -113,6 +121,7 @@ export async function fetchVideoTitle(url) {
       "--print",
       "%(title)s",
       ...getCookieArgs(),
+      ...JS_RUNTIME_ARGS,
       url,
     ]);
     if (result.code !== 0) return "";
@@ -137,6 +146,7 @@ export async function processAudioJob(jobId, url, qualityParam, title) {
     "--no-playlist",
     "--newline", // paksa progress ditulis per baris baru, bukan \r overwrite
     ...getCookieArgs(),
+    ...JS_RUNTIME_ARGS,
     url,
   ];
 
@@ -211,6 +221,7 @@ export async function processVideoJob(jobId, url, options = {}) {
     "--merge-output-format", "mp4",
     "--newline",
     ...getCookieArgs(),
+    ...JS_RUNTIME_ARGS,
   ];
 
   if (formatId) {

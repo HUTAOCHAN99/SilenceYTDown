@@ -4,6 +4,11 @@ import { promisify } from "util";
 import { getCookieArgs } from "../../../lib/cookies";
 import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
 
+// Lihat catatan yang sama di lib/cookies.js pemakainya -- yt-dlp butuh JS
+// runtime eksternal sejak versi 2025.11.12+, dan Node.js dari base image
+// sudah cukup untuk itu.
+const JS_RUNTIME_ARGS = ["--js-runtimes", "node"];
+
 const execFileAsync = promisify(execFile);
 
 export async function GET(request) {
@@ -22,6 +27,7 @@ export async function GET(request) {
       "-J", // dump info sebagai JSON
       "--no-playlist",
       ...getCookieArgs(),
+      ...JS_RUNTIME_ARGS,
       url,
     ]);
 
