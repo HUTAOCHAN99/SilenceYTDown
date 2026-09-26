@@ -27,6 +27,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
+# Install Deno sebagai JavaScript runtime. Sejak yt-dlp 2025.11.12, YouTube
+# butuh solver JS eksternal untuk signature & "n" challenge (komponen
+# yt-dlp-ejs, sudah termasuk di binary yt-dlp resmi). Tanpa runtime ini,
+# yt-dlp masih bisa jalan tapi banyak format akan hilang / gagal, seperti
+# error "Signature solving failed" & "The page needs to be reloaded".
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- \
+    && chmod a+rx /usr/local/bin/deno
+
 WORKDIR /app
 
 # Install dependency Node.js dulu (cache layer terpisah dari source code
