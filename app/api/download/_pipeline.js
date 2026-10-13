@@ -3,8 +3,7 @@ import fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { updateJob } from "./_store";
-import { getCookieArgs } from "../../../lib/cookies";
-import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
+import { runWithCookieRotation } from "../../../lib/cookies";
 
 // yt-dlp (sejak rilis 2025.11.12) butuh JS runtime eksternal buat extractor
 // YouTube -- default-nya cuma nyoba Deno, yang TIDAK ada di image ini.
@@ -115,15 +114,19 @@ function runProcessCollectStdout(cmd, args) {
 
 export async function fetchVideoTitle(url) {
   try {
-    const result = await runProcessCollectStdout("yt-dlp", [
-      "--no-playlist",
-      "--skip-download",
-      "--print",
-      "%(title)s",
-      ...getCookieArgs(),
-      ...JS_RUNTIME_ARGS,
-      url,
-    ]);
+    const result = await runWithCookieRotation(
+      (cookieArgs) =>
+        runProcessCollectStdout("yt-dlp", [
+          "--no-playlist",
+          "--skip-download",
+          "--print",
+          "%(title)s",
+          ...cookieArgs,
+          ...JS_RUNTIME_ARGS,
+          url,
+        ]),
+      "(ambil judul)",
+    );
     if (result.code !== 0) return "";
     return result.stdout?.trim?.() || "";
   } catch {
@@ -145,20 +148,20 @@ export async function processAudioJob(jobId, url, qualityParam, title) {
     "-o", sourceTemplate,
     "--no-playlist",
     "--newline", // paksa progress ditulis per baris baru, bukan \r overwrite
-    ...getCookieArgs(),
     ...JS_RUNTIME_ARGS,
     url,
   ];
 
-  const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) =>
-    parseYtDlpProgressLine(line, jobId),
+  const ytdlpResult = await runWithCookieRotation(
+    (cookieArgs) =>
+      runProcess("yt-dlp", [...cookieArgs, ...ytdlpArgs], (line) =>
+        parseYtDlpProgressLine(line, jobId),
+      ),
+    "(saat proses download audio)",
   );
 
   if (ytdlpResult.code !== 0) {
     console.error(`yt-dlp gagal (audio): ${ytdlpResult.stderr}`);
-    if (looksLikeBotCheck(ytdlpResult.stderr)) {
-      notifyCookiesExpired("(saat proses download audio)");
-    }
     fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     updateJob(jobId, { status: "error", error: "Gagal mengunduh audio dari sumbernya" });
     return;
@@ -220,7 +223,6 @@ export async function processVideoJob(jobId, url, options = {}) {
     "--no-playlist",
     "--merge-output-format", "mp4",
     "--newline",
-    ...getCookieArgs(),
     ...JS_RUNTIME_ARGS,
   ];
 
@@ -236,15 +238,16 @@ export async function processVideoJob(jobId, url, options = {}) {
   // Catatan: yt-dlp mengunduh video lalu audio sebagai dua stream terpisah,
   // jadi persentase ini bisa "reset" turun sekali di tengah jalan (mulai
   // stream audio setelah video selesai). Itu normal, bukan bug.
-  const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) =>
-    parseYtDlpProgressLine(line, jobId),
+  const ytdlpResult = await runWithCookieRotation(
+    (cookieArgs) =>
+      runProcess("yt-dlp", [...cookieArgs, ...ytdlpArgs], (line) =>
+        parseYtDlpProgressLine(line, jobId),
+      ),
+    "(saat proses download video)",
   );
 
   if (ytdlpResult.code !== 0) {
     console.error(`yt-dlp gagal: ${ytdlpResult.stderr}`);
-    if (looksLikeBotCheck(ytdlpResult.stderr)) {
-      notifyCookiesExpired("(saat proses download video)");
-    }
     fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     updateJob(jobId, { status: "error", error: "Gagal mengunduh video dari sumbernya" });
     return;

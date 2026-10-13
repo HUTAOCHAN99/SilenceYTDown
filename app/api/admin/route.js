@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
-import { COOKIES_PATH } from "../../../../lib/cookies";
+import { COOKIES_PATH, getCookiePoolStatus } from "../../../../lib/cookies";
 
 // Taruh file ini di app/api/admin/cookies/route.js
 //
@@ -49,10 +49,14 @@ export async function GET(request) {
     return NextResponse.json({ error: "Token tidak valid" }, { status: 401 });
   }
 
+  // pool = status tiap slot cookies (YT_COOKIES_B64, _1, _2, ... + upload),
+  // hanya nama & hidup/habisnya -- isi cookies tidak pernah ditampilkan.
+  const pool = getCookiePoolStatus();
+
   try {
     const stat = await fs.stat(COOKIES_PATH);
-    return NextResponse.json({ exists: true, lastModified: stat.mtime });
+    return NextResponse.json({ exists: true, lastModified: stat.mtime, pool });
   } catch {
-    return NextResponse.json({ exists: false });
+    return NextResponse.json({ exists: false, pool });
   }
 }

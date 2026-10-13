@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { getCookieArgs } from "../../../lib/cookies";
-import { looksLikeBotCheck, notifyCookiesExpired } from "../../../lib/notify";
+import { runWithCookieRotation } from "../../../lib/cookies";
 
 // Lihat catatan yang sama di lib/cookies.js pemakainya -- yt-dlp butuh JS
 // runtime eksternal sejak versi 2025.11.12+, dan Node.js dari base image
@@ -23,13 +22,29 @@ export async function GET(request) {
   }
 
   try {
-    const { stdout } = await execFileAsync("yt-dlp", [
-      "-J", // dump info sebagai JSON
-      "--no-playlist",
-      ...getCookieArgs(),
-      ...JS_RUNTIME_ARGS,
-      url,
-    ]);
+    // execFile melempar error kalau exit code != 0, sedangkan
+    // runWithCookieRotation butuh hasil { code, stderr } -- jadi dibungkus.
+    const result = await runWithCookieRotation(async (cookieArgs) => {
+      try {
+        const { stdout } = await execFileAsync(
+          "yt-dlp",
+          [
+            "-J", // dump info sebagai JSON
+            "--no-playlist",
+            ...cookieArgs,
+            ...JS_RUNTIME_ARGS,
+            url,
+          ],
+          { maxBuffer: 64 * 1024 * 1024 },
+        );
+        return { code: 0, stdout, stderr: "" };
+      } catch (err) {
+        return { code: err?.code || 1, stdout: "", stderr: err?.stderr || err?.message || "", error: err };
+      }
+    }, "(saat ambil info video)");
+
+    if (result.code !== 0) throw result.error || new Error(result.stderr);
+    const { stdout } = result;
 
     const info = JSON.parse(stdout);
 
@@ -198,9 +213,6 @@ export async function GET(request) {
     });
   } catch (err) {
     console.error(err);
-    if (looksLikeBotCheck(err?.stderr || err?.message || "")) {
-      notifyCookiesExpired("(saat ambil info video)");
-    }
     return NextResponse.json(
       { error: "Gagal mengambil info video" },
       { status: 500 },

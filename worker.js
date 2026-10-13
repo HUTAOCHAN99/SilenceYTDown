@@ -17,8 +17,7 @@ import http from "http";
 import os from "os";
 import path from "path";
 import { getConnection, DOWNLOAD_QUEUE_NAME } from "./lib/queue.js";
-import { getCookieArgs, ensureCookiesFromEnv } from "./lib/cookies.js";
-import { looksLikeBotCheck, notifyCookiesExpired } from "./lib/notify.js";
+import { runWithCookieRotation, ensureCookiesFromEnv } from "./lib/cookies.js";
 
 // yt-dlp (sejak rilis 2025.11.12) butuh JS runtime eksternal buat extractor
 // YouTube -- default-nya cuma nyoba Deno, yang TIDAK ada di image ini.
@@ -28,9 +27,9 @@ import { looksLikeBotCheck, notifyCookiesExpired } from "./lib/notify.js";
 // Lihat: https://github.com/yt-dlp/yt-dlp/wiki/EJS
 const JS_RUNTIME_ARGS = ["--js-runtimes", "node"];
 
-// Materialisasi cookies dari YT_COOKIES_B64 (kalau di-set) sebelum job
-// pertama diproses -- lihat komentar di lib/cookies.js soal kenapa ini
-// perlu dan tidak bisa cuma mengandalkan /api/admin/cookies.
+// Materialisasi pool cookies dari YT_COOKIES_B64, YT_COOKIES_B64_1, _2, ...
+// sebelum job pertama diproses. Rotasi otomatis antar-cookies ada di
+// runWithCookieRotation() -- lihat lib/cookies.js.
 ensureCookiesFromEnv();
 
 // worker.js adalah proses long-running yang start SETELAH Railway inject env
@@ -115,14 +114,18 @@ function runProcessCollectStdout(cmd, args) {
 
 async function fetchVideoTitle(url) {
   try {
-    const result = await runProcessCollectStdout("yt-dlp", [
-      "--no-playlist",
-      "--skip-download",
-      "--print", "%(title)s",
-      ...getCookieArgs(),
-      ...JS_RUNTIME_ARGS,
-      url,
-    ]);
+    const result = await runWithCookieRotation(
+      (cookieArgs) =>
+        runProcessCollectStdout("yt-dlp", [
+          "--no-playlist",
+          "--skip-download",
+          "--print", "%(title)s",
+          ...cookieArgs,
+          ...JS_RUNTIME_ARGS,
+          url,
+        ]),
+      "(worker, ambil judul)",
+    );
     if (result.code !== 0) return "";
     return result.stdout?.trim?.() || "";
   } catch {
@@ -136,25 +139,28 @@ async function processAudioJob(job, tmpDir) {
   const sourceTemplate = path.join(tmpDir, "source.%(ext)s");
   const finalPath = path.join(tmpDir, `audio.${preset.ext}`);
 
-  const ytdlpArgs = [
-    "-f", "bestaudio/best",
-    "-o", sourceTemplate,
-    "--no-playlist",
-    "--newline",
-    ...getCookieArgs(),
-    ...JS_RUNTIME_ARGS,
-    url,
-  ];
-
-  const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {
-    const percent = parseProgressPercent(line);
-    if (percent !== null) job.updateProgress({ status: "downloading", percent });
-  });
+  const ytdlpResult = await runWithCookieRotation(
+    (cookieArgs) =>
+      runProcess(
+        "yt-dlp",
+        [
+          "-f", "bestaudio/best",
+          "-o", sourceTemplate,
+          "--no-playlist",
+          "--newline",
+          ...cookieArgs,
+          ...JS_RUNTIME_ARGS,
+          url,
+        ],
+        (line) => {
+          const percent = parseProgressPercent(line);
+          if (percent !== null) job.updateProgress({ status: "downloading", percent });
+        },
+      ),
+    "(worker, saat proses download audio)",
+  );
 
   if (ytdlpResult.code !== 0) {
-    if (looksLikeBotCheck(ytdlpResult.stderr)) {
-      notifyCookiesExpired("(worker, saat proses download audio)");
-    }
     throw new Error(`yt-dlp gagal (audio): ${ytdlpResult.stderr.slice(-1500)}`);
   }
 
@@ -201,19 +207,19 @@ async function processVideoJob(job, tmpDir) {
   } else {
     ytdlpArgs.push("-f", "bv*[ext=mp4]+ba[ext=m4a]/best[ext=mp4]/best");
   }
-  ytdlpArgs.push(...getCookieArgs());
   ytdlpArgs.push(...JS_RUNTIME_ARGS);
   ytdlpArgs.push(url);
 
-  const ytdlpResult = await runProcess("yt-dlp", ytdlpArgs, (line) => {
-    const percent = parseProgressPercent(line);
-    if (percent !== null) job.updateProgress({ status: "downloading", percent });
-  });
+  const ytdlpResult = await runWithCookieRotation(
+    (cookieArgs) =>
+      runProcess("yt-dlp", [...cookieArgs, ...ytdlpArgs], (line) => {
+        const percent = parseProgressPercent(line);
+        if (percent !== null) job.updateProgress({ status: "downloading", percent });
+      }),
+    "(worker, saat proses download video)",
+  );
 
   if (ytdlpResult.code !== 0) {
-    if (looksLikeBotCheck(ytdlpResult.stderr)) {
-      notifyCookiesExpired("(worker, saat proses download video)");
-    }
     throw new Error(`yt-dlp gagal (video): ${ytdlpResult.stderr.slice(-1500)}`);
   }
 
